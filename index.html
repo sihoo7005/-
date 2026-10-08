@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101218">
+  <title>거꾸로 — 역재생 녹음기</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101218;--panel:#191c25;--muted:#a0a4b4;--line:#303441;--lime:#d8ff68;--pink:#ff7898}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% -20%,#303541 0,transparent 48%),var(--bg);color:#f5f5f2;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;place-items:center;padding:28px}
+    main{width:min(100%,520px)}
+    .eyebrow{color:var(--lime);font-size:.76rem;font-weight:750;letter-spacing:.16em;text-transform:uppercase}
+    h1{font-size:clamp(3.2rem,14vw,5.5rem);letter-spacing:-.09em;line-height:.95;margin:12px 0 18px}
+    h1 span{color:var(--lime)}
+    .intro{color:var(--muted);max-width:380px;margin:0 0 30px}
+    .card{background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--line);border-radius:24px;padding:24px;box-shadow:0 24px 80px #0005}
+    .meter{display:flex;align-items:center;justify-content:center;gap:5px;height:100px;margin:4px 0 20px;color:#777d8c}
+    .meter i{display:block;width:4px;height:var(--h);border-radius:4px;background:currentColor;opacity:.72}
+    .recording .meter{color:var(--pink)}
+    .recording .meter i{animation:pulse .7s ease-in-out infinite alternate;animation-delay:var(--d)}
+    @keyframes pulse{to{transform:scaleY(.32);opacity:.45}}
+    .time{font-variant-numeric:tabular-nums;text-align:center;font-size:2.2rem;font-weight:650;letter-spacing:.04em}
+    .status{min-height:24px;text-align:center;color:var(--muted);font-size:.9rem;margin:2px 0 22px}
+    .controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    button{font:inherit;font-weight:700;border:0;border-radius:14px;padding:14px 16px;cursor:pointer;transition:transform .15s,opacity .15s,background .15s}
+    button:hover:not(:disabled){transform:translateY(-2px)}
+    button:focus-visible{outline:3px solid white;outline-offset:3px}
+    button:disabled{opacity:.38;cursor:not-allowed}
+    .record{background:var(--pink);color:#261017}.record::before{content:"●";margin-right:9px}
+    .stop{background:#2a2e39;color:#f5f5f2}.stop::before{content:"■";margin-right:9px}
+    .play{background:var(--lime);color:#171a10}.play::before{content:"↶";font-size:1.2em;margin-right:8px}
+    .reset{background:transparent;color:var(--muted);border:1px solid var(--line)}
+    .hint{font-size:.8rem;color:#777d8c;text-align:center;margin:18px 0 0}
+    @media(max-width:380px){body{padding:18px}.card{padding:18px}.controls{gap:8px}button{padding:13px 10px;font-size:.92rem}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">A tiny audio experiment</div>
+    <h1>거꾸로<span>.</span></h1>
+    <p class="intro">짧은 소리를 녹음하고, 시간을 거슬러 재생해 보세요. 익숙한 목소리도 낯설게 들릴 거예요.</p>
+    <section class="card" id="card" aria-label="역재생 녹음기">
+      <div class="meter" aria-hidden="true" id="meter"></div>
+      <div class="time" id="time">00:00</div>
+      <p class="status" id="status" role="status" aria-live="polite">녹음 버튼을 눌러 시작하세요</p>
+      <div class="controls">
+        <button class="record" id="record">녹음</button>
+        <button class="stop" id="stop" disabled>녹음 종료</button>
+        <button class="play" id="play" disabled>역재생</button>
+        <button class="reset" id="reset" disabled>다시 하기</button>
+      </div>
+      <p class="hint">녹음은 이 브라우저 안에서만 처리됩니다.</p>
+    </section>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const card = $('card'), recordButton = $('record'), stopButton = $('stop');
+    const playButton = $('play'), resetButton = $('reset'), status = $('status'), time = $('time');
+    const meter = $('meter');
+    for(let i=0;i<43;i++){const bar=document.createElement('i');bar.style.setProperty('--h',`${12+Math.abs(Math.sin(i*.73)*Math.cos(i*.19))*66}px`);bar.style.setProperty('--d',`${i%9*-.08}s`);meter.append(bar)}
+    let recorder, stream, chunks=[], reversedBuffer, context, startedAt, timerId, source;
+    const formatTime = seconds => `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
+
+    recordButton.addEventListener('click', async () => {
+      if(!navigator.mediaDevices?.getUserMedia){status.textContent='이 브라우저에서는 마이크 녹음을 지원하지 않아요.';return}
+      recordButton.disabled=true;status.textContent='마이크 권한을 기다리는 중…';
+      try{
+        stream=await navigator.mediaDevices.getUserMedia({audio:true});
+        chunks=[];recorder=new MediaRecorder(stream);
+        recorder.ondataavailable=event=>{if(event.data.size)chunks.push(event.data)};
+        recorder.onerror=()=>{status.textContent='녹음 중 문제가 생겼어요.';stream?.getTracks().forEach(track=>track.stop());card.classList.remove('recording');recordButton.disabled=false;stopButton.disabled=true};
+        recorder.onstop=async()=>{
+          stream?.getTracks().forEach(track=>track.stop());
+          try{
+            const audioContext= context || (context=new (window.AudioContext||window.webkitAudioContext)());
+            const decoded=await audioContext.decodeAudioData(await new Blob(chunks).arrayBuffer());
+            reversedBuffer=audioContext.createBuffer(decoded.numberOfChannels,decoded.length,decoded.sampleRate);
+            for(let channel=0;channel<decoded.numberOfChannels;channel++)reversedBuffer.copyToChannel(Float32Array.from(decoded.getChannelData(channel)).reverse(),channel);
+            status.textContent='준비됐어요. 역재생을 눌러 들어보세요.';playButton.disabled=false;resetButton.disabled=false;
+          }catch{status.textContent='녹음을 읽지 못했어요. 다시 녹음해 주세요.';resetButton.disabled=false}
+          recordButton.disabled=false;
+        };
+        recorder.start();startedAt=Date.now();card.classList.add('recording');stopButton.disabled=false;
+        status.textContent='녹음 중…';time.textContent='00:00';
+        timerId=setInterval(()=>time.textContent=formatTime(Math.floor((Date.now()-startedAt)/1000)),250);
+      }catch(error){recordButton.disabled=false;status.textContent=error.name==='NotAllowedError'?'마이크 권한을 허용해야 녹음할 수 있어요.':'마이크에 연결할 수 없어요.'}
+    });
+
+    stopButton.addEventListener('click',()=>{
+      if(recorder?.state==='recording'){recorder.stop();stopButton.disabled=true;clearInterval(timerId);time.textContent=formatTime(Math.floor((Date.now()-startedAt)/1000));card.classList.remove('recording');status.textContent='녹음을 준비하고 있어요…'}
+    });
+    playButton.addEventListener('click',async()=>{
+      if(!reversedBuffer)return;
+      if(source){source.stop();source=null}
+      await context.resume();source=context.createBufferSource();source.buffer=reversedBuffer;source.connect(context.destination);
+      source.onended=()=>{source=null;if(!recorder||recorder.state!=='recording')status.textContent='재생이 끝났어요.'};
+      source.start();status.textContent='역재생 중…';
+    });
+    resetButton.addEventListener('click',()=>{
+      if(source){source.stop();source=null}clearInterval(timerId);reversedBuffer=null;chunks=[];
+      time.textContent='00:00';status.textContent='녹음 버튼을 눌러 시작하세요';
+      playButton.disabled=true;resetButton.disabled=true;recordButton.disabled=false;stopButton.disabled=true;
+    });
+  </script>
+</body>
+</html>
